@@ -22,12 +22,13 @@
             <artifactId>mysql-connector-java</artifactId>
             <version>8.0.29</version> <!-- Use the latest version -->
         </dependency>
-
         <dependency>
-            <groupId>com.influxdb</groupId>
-            <artifactId>influxdb-client-java</artifactId>
-            <version>7.2.0</version>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.2</version>
         </dependency>
+
+
         <!-- Spark Core -->
         <dependency>
             <groupId>org.apache.spark</groupId>

@@ -26,10 +26,10 @@ import org.apache.spark.sql.types.StructType;
 
 import java.util.Collections;
 import java.util.concurrent.TimeoutException;
-
 public class StreamingNewsTrends {
 
     public static void main(String[] args) throws StreamingQueryException, TimeoutException {
+
 
         SparkConf conf = new SparkConf().setAppName("StreamingNewsTrends").setMaster("local[*]");
         SparkSession spark = SparkSession.builder().config(conf).getOrCreate();
@@ -136,6 +136,7 @@ public class StreamingNewsTrends {
                 .selectExpr("explode(entities.result) as entity")
                 .filter(functions.length(functions.col("entity")).gt(2));
 
+
         nerEntities.writeStream()
                 .outputMode("append")
                 .format("console")
@@ -154,6 +155,43 @@ public class StreamingNewsTrends {
                 .groupBy("word")
                 .count();
 
+        // Add inside your keywordCounts logic
+        keywordCounts
+                .withColumn("timestamp", functions.current_timestamp())
+                .writeStream()
+                .foreachBatch((batchDF, batchId) -> {
+                    batchDF
+                            .write()
+                            .format("jdbc")
+                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
+                            .option("dbtable", "word_trends")
+                            .option("user", "postgres")
+                            .option("password", "fawzi1234")
+                            .option("driver", "org.postgresql.Driver")
+                            .mode("append")
+                            .save();
+                })
+                .outputMode("update")
+                .start();
+        nerEntities
+                .withColumn("count", functions.lit(1))
+                .withColumn("timestamp", functions.current_timestamp())
+                .writeStream()
+                .foreachBatch((batchDF, batchId) -> {
+                    batchDF.write()
+                            .format("jdbc")
+                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
+                            .option("dbtable", "ner_entities")
+                            .option("user", "postgres")
+                            .option("password", "fawzi1234")
+                            .option("driver", "org.postgresql.Driver")
+                            .mode("append")
+                            .save();
+                })
+                .outputMode("append")
+                .start();
+
+
         // Stream output to console
         StreamingQuery query = keywordCounts
                 .writeStream()
@@ -167,6 +205,7 @@ public class StreamingNewsTrends {
                 .outputMode("append")
                 .format("console")
                 .start();
+
 
 
         System.out.println("Streaming news analysis started. Waiting for data...");
