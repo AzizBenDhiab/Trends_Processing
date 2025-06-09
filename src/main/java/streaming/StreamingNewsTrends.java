@@ -119,8 +119,8 @@ public class StreamingNewsTrends {
                 wordEmbeddings,
                 nerModel,
                 nerConverter,
-                finisher,
-                tf
+//                finisher,
+//                tf
         });
 
         // Empty DataFrame with "text" column to fit the pipeline
@@ -155,44 +155,44 @@ public class StreamingNewsTrends {
                 .groupBy("word")
                 .count();
 
-        // Add inside your keywordCounts logic
-        keywordCounts
-                .withColumn("timestamp", functions.current_timestamp())
-                .writeStream()
-                .foreachBatch((batchDF, batchId) -> {
-                    batchDF
-                            .write()
-                            .format("jdbc")
-                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
-                            .option("dbtable", "word_trends")
-                            .option("user", "postgres")
-                            .option("password", "fawzi1234")
-                            .option("driver", "org.postgresql.Driver")
-                            .mode("append")
-                            .save();
-                })
-                .outputMode("update")
-                .start();
-        nerEntities
-                .withColumn("count", functions.lit(1))
-                .withColumn("timestamp", functions.current_timestamp())
-                .writeStream()
-                .foreachBatch((batchDF, batchId) -> {
-                    batchDF.write()
-                            .format("jdbc")
-                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
-                            .option("dbtable", "ner_entities")
-                            .option("user", "postgres")
-                            .option("password", "fawzi1234")
-                            .option("driver", "org.postgresql.Driver")
-                            .mode("append")
-                            .save();
-                })
-                .outputMode("append")
-                .start();
-
-
-        // Stream output to console
+//        // Add inside your keywordCounts logic
+//        keywordCounts
+//                .withColumn("timestamp", functions.current_timestamp())
+//                .writeStream()
+//                .foreachBatch((batchDF, batchId) -> {
+//                    batchDF
+//                            .write()
+//                            .format("jdbc")
+//                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
+//                            .option("dbtable", "word_trends")
+//                            .option("user", "postgres")
+//                            .option("password", "fawzi1234")
+//                            .option("driver", "org.postgresql.Driver")
+//                            .mode("append")
+//                            .save();
+//                })
+//                .outputMode("update")
+//                .start();
+//        nerEntities
+//                .withColumn("count", functions.lit(1))
+//                .withColumn("timestamp", functions.current_timestamp())
+//                .writeStream()
+//                .foreachBatch((batchDF, batchId) -> {
+//                    batchDF.write()
+//                            .format("jdbc")
+//                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
+//                            .option("dbtable", "ner_entities")
+//                            .option("user", "postgres")
+//                            .option("password", "fawzi1234")
+//                            .option("driver", "org.postgresql.Driver")
+//                            .mode("append")
+//                            .save();
+//                })
+//                .outputMode("append")
+//                .start();
+//
+//
+//        // Stream output to console
         StreamingQuery query = keywordCounts
                 .writeStream()
                 .outputMode("update")
