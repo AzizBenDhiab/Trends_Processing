@@ -134,7 +134,7 @@ public class StreamingNewsTrends {
         Dataset<Row> nlpTransformed = nlpModel.transform(cleanedData);
         Dataset<Row> nerEntities = nlpTransformed
                 .selectExpr("explode(entities.result) as entity")
-                .filter(functions.length(functions.col("entity")).gt(2));
+                .filter(functions.length(functions.col("entity")).gt(Integer.valueOf(2)));;
 
 
         nerEntities.writeStream()
@@ -147,7 +147,7 @@ public class StreamingNewsTrends {
         // Extract and explode keywords
         Dataset<Row> keywords = nlpTransformed
                 .select(functions.explode(functions.col("finished_lemma")).as("word"))
-                .filter(functions.length(functions.col("word")).gt(2))
+                .filter(functions.length(functions.col("word")).gt(Integer.valueOf(2)))
                 .filter(functions.col("word").notEqual(""));
 
         // Group and count keywords
@@ -174,7 +174,7 @@ public class StreamingNewsTrends {
                 .outputMode("update")
                 .start();
         nerEntities
-                .withColumn("count", functions.lit(1))
+                .withColumn("count", functions.lit(Integer.valueOf(18)))
                 .withColumn("timestamp", functions.current_timestamp())
                 .writeStream()
                 .foreachBatch((batchDF, batchId) -> {
