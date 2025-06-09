@@ -1,214 +1,258 @@
 package streaming;
 
-import com.johnsnowlabs.nlp.DocumentAssembler;
-import com.johnsnowlabs.nlp.Finisher;
-import com.johnsnowlabs.nlp.annotators.LemmatizerModel;
-import com.johnsnowlabs.nlp.annotators.StopWordsCleaner;
-import com.johnsnowlabs.nlp.annotators.Tokenizer;
-import com.johnsnowlabs.nlp.annotators.ner.NerConverter;
-import com.johnsnowlabs.nlp.annotators.ner.dl.NerDLModel;
-import com.johnsnowlabs.nlp.annotators.pos.perceptron.PerceptronModel;
-import com.johnsnowlabs.nlp.embeddings.WordEmbeddingsModel;
 import org.apache.spark.SparkConf;
-import org.apache.spark.ml.Pipeline;
-import org.apache.spark.ml.PipelineModel;
-import org.apache.spark.ml.PipelineStage;
-import org.apache.spark.ml.feature.HashingTF;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.functions;
+import org.apache.spark.sql.*;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.StreamingQueryException;
 import org.apache.spark.sql.streaming.Trigger;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType;
-
-import java.util.Collections;
 import java.util.concurrent.TimeoutException;
+import static org.apache.spark.sql.functions.*;
+
 public class StreamingNewsTrends {
 
+    private static final String DB_URL = "jdbc:postgresql://localhost:5432/rss_analytics";
+    private static final String DB_USER = "postgres"; // Changé pour simplifier
+    private static final String DB_PASSWORD = "rabeb2002"; // CHANGEZ ICI votre mot de passe
+    private static final String DB_DRIVER = "org.postgresql.Driver";
+
     public static void main(String[] args) throws StreamingQueryException, TimeoutException {
+        System.setProperty("hadoop.home.dir", "C:\\hadoop");
 
+        SparkConf conf = new SparkConf()
+                .setAppName("StreamingRSSProcessor")
+                .setMaster("local[*]");
 
-        SparkConf conf = new SparkConf().setAppName("StreamingNewsTrends").setMaster("local[*]");
-        SparkSession spark = SparkSession.builder().config(conf).getOrCreate();
+        SparkSession spark = SparkSession.builder()
+                .config(conf)
+                .getOrCreate();
 
-        // Set log level
         spark.sparkContext().setLogLevel("ERROR");
 
-        // Read streaming text data from socket
+        // Test PostgreSQL connection
+        try {
+            System.out.println("🔌 Testing PostgreSQL connection...");
+            Dataset<Row> testConnection = spark.read()
+                    .format("jdbc")
+                    .option("url", DB_URL)
+                    .option("dbtable", "(SELECT 1 as test) as test_table")
+                    .option("user", DB_USER)
+                    .option("password", DB_PASSWORD)
+                    .option("driver", DB_DRIVER)
+                    .load();
+            testConnection.show();
+            System.out.println("✅ PostgreSQL connection successful!");
+        } catch (Exception e) {
+            System.err.println("❌ PostgreSQL connection failed: " + e.getMessage());
+            System.exit(1);
+        }
+
+        System.out.println("🚀 Starting streaming on port 9999...");
+        System.out.println("📡 Send articles via CLI now!");
+
+        // Read streaming data
         Dataset<Row> lines = spark.readStream()
                 .format("socket")
                 .option("host", "localhost")
                 .option("port", 9999)
+                .option("includeTimestamp", true)
                 .load();
 
-        // Clean text: remove punctuation
-        Dataset<Row> cleanedData = lines.withColumn("text",
-                functions.regexp_replace(functions.col("value"), "[,\\.!?]", ""));
-
-        // NLP Stages
-        DocumentAssembler documentAssembler = (DocumentAssembler) new DocumentAssembler()
-                .setInputCol("text")
-                .setOutputCol("document");
-        // Tokenizer - takes document as input
-        Tokenizer tokenizer = new Tokenizer();
-        tokenizer.setInputCols(new String[]{"document"});
-        tokenizer.setOutputCol("token");
-
-        // Add POS Tagger (PerceptronModel)
-        PerceptronModel posTagger = PerceptronModel.pretrained();
-        posTagger.setInputCols(new String[]{"document", "token"});
-        posTagger.setOutputCol("pos");
-
-        // Word Embeddings - to generate word embeddings for token
-        WordEmbeddingsModel wordEmbeddings = WordEmbeddingsModel.pretrained("glove_100d"); // Choose different embeddings
-        wordEmbeddings.setInputCols(new String[]{"document", "token"});
-        wordEmbeddings.setOutputCol("word_embeddings");
-
-        // NER model (pretrained)
-        NerDLModel nerModel = NerDLModel.pretrained();
-        nerModel.setInputCols(new String[]{"document", "token", "word_embeddings"});
-        nerModel.setOutputCol("ner");
-
-        // Convert NER chunks to actual named entities
-        NerConverter nerConverter = new NerConverter();
-        nerConverter.setInputCols(new String[]{"document", "token", "ner"});
-        nerConverter.setOutputCol("entities");
-
-        // StopWordsCleaner - takes token as input
-        StopWordsCleaner stopWordsCleaner = new StopWordsCleaner();
-        stopWordsCleaner.setInputCols(new String[]{"token"});
-        stopWordsCleaner.setOutputCol("cleanTokens");
-        stopWordsCleaner.setCaseSensitive(false);
-        stopWordsCleaner.setStopWords(new String[]{
-                "0o", "0s", "3a", "3b", "3d", "6b", "6o", "a", "a1", "a2", "a3", "a4", "ab", "able", "about", "above", "abst", "ac", "accordance", "according", "accordingly", "across", "act", "actually", "ad", "added", "adj", "ae", "af", "affected", "affecting", "affects", "after", "afterwards", "ag", "again", "against", "ah", "ain", "ain't", "aj", "al", "all", "allow", "allows", "almost", "alone", "along", "already", "also", "although", "always", "am", "among", "amongst", "amoungst", "amount", "an", "and", "announce", "another", "any", "anybody", "anyhow", "anymore", "anyone", "anything", "anyway", "anyways", "anywhere", "ao", "ap", "apart", "apparently", "appear", "appreciate", "appropriate", "approximately", "ar", "are", "aren", "arent", "aren't", "arise", "around", "as", "a's", "aside", "ask", "asking", "associated", "at", "au", "auth", "av", "available", "aw", "away", "awfully", "ax", "ay", "az", "b", "b1", "b2", "b3", "ba", "back", "bc", "bd", "be", "became", "because", "become", "becomes", "becoming", "been", "before", "beforehand", "begin", "beginning", "beginnings", "begins", "behind", "being", "believe", "below", "beside", "besides", "best", "better", "between", "beyond", "bi", "bill", "biol", "bj", "bk", "bl", "bn", "both", "bottom", "bp", "br", "brief", "briefly", "bs", "bt", "bu", "but", "bx", "by", "c", "c1", "c2", "c3", "ca", "call", "came", "can", "cannot", "cant", "can't", "cause", "causes", "cc", "cd", "ce", "certain", "certainly", "cf", "cg", "ch", "changes", "ci", "cit", "cj", "cl", "clearly", "cm", "c'mon", "cn", "co", "com", "come", "comes", "con", "concerning", "consequently", "consider", "considering", "contain", "containing", "contains", "corresponding", "could", "couldn", "couldnt", "couldn't", "course", "cp", "cq", "cr", "cry", "cs", "c's", "ct", "cu", "currently", "cv", "cx", "cy", "cz", "d", "d2", "da", "date", "dc", "dd", "de", "definitely", "describe", "described", "despite", "detail", "df", "di", "did", "didn", "didn't", "different", "dj", "dk", "dl", "do", "does", "doesn", "doesn't", "doing", "don", "done", "don't", "down", "downwards", "dp", "dr", "ds", "dt", "du", "due", "during", "dx", "dy", "e", "e2", "e3", "ea", "each", "ec", "ed", "edu", "ee", "ef", "effect", "eg", "ei", "eight", "eighty", "either", "ej", "el", "eleven", "else", "elsewhere", "em", "empty", "en", "end", "ending", "enough", "entirely", "eo", "ep", "eq", "er", "es", "especially", "est", "et", "et-al", "etc", "eu", "ev", "even", "ever", "every", "everybody", "everyone", "everything", "everywhere", "ex", "exactly", "example", "except", "ey", "f", "f2", "fa", "far", "fc", "few", "ff", "fi", "fifteen", "fifth", "fify", "fill", "find", "fire", "first", "five", "fix", "fj", "fl", "fn", "fo", "followed", "following", "follows", "for", "former", "formerly", "forth", "forty", "found", "four", "fr", "from", "front", "fs", "ft", "fu", "full", "further", "furthermore", "fy", "g", "ga", "gave", "ge", "get", "gets", "getting", "gi", "give", "given", "gives", "giving", "gj", "gl", "go", "goes", "going", "gone", "got", "gotten", "gr", "greetings", "gs", "gy", "h", "h2", "h3", "had", "hadn", "hadn't", "happens", "hardly", "has", "hasn", "hasnt", "hasn't", "have", "haven", "haven't", "having", "he", "hed", "he'd", "he'll", "hello", "help", "hence", "her", "here", "hereafter", "hereby", "herein", "heres", "here's", "hereupon", "hers", "herself", "hes", "he's", "hh", "hi", "hid", "him", "himself", "his", "hither", "hj", "ho", "home", "hopefully", "how", "howbeit", "however", "how's", "hr", "hs", "http", "hu", "hundred", "hy", "i", "i2", "i3", "i4", "i6", "i7", "i8", "ia", "ib", "ibid", "ic", "id", "i'd", "ie", "if", "ig", "ignored", "ih", "ii", "ij", "il", "i'll", "im", "i'm", "immediate", "immediately", "importance", "important", "in", "inasmuch", "inc", "indeed", "index", "indicate", "indicated", "indicates", "information", "inner", "insofar", "instead", "interest", "into", "invention", "inward", "io", "ip", "iq", "ir", "is", "isn", "isn't", "it", "itd", "it'd", "it'll", "its", "it's", "itself", "iv", "i've", "ix", "iy", "iz", "j", "jj", "jr", "js", "jt", "ju", "just", "k", "ke", "keep", "keeps", "kept", "kg", "kj", "km", "know", "known", "knows", "ko", "l", "l2", "la", "largely", "last", "lately", "later", "latter", "latterly", "lb", "lc", "le", "least", "les", "less", "lest", "let", "lets", "let's", "lf", "like", "liked", "likely", "line", "little", "lj", "ll", "ll", "ln", "lo", "look", "looking", "looks", "los", "lr", "ls", "lt", "ltd", "m", "m2", "ma", "made", "mainly", "make", "makes", "many", "may", "maybe", "me", "mean", "means", "meantime", "meanwhile", "merely", "mg", "might", "mightn", "mightn't", "mill", "million", "mine", "miss", "ml", "mn", "mo", "more", "moreover", "most", "mostly", "move", "mr", "mrs", "ms", "mt", "mu", "much", "mug", "must", "mustn", "mustn't", "my", "myself", "n", "n2", "na", "name", "namely", "nay", "nc", "nd", "ne", "near", "nearly", "necessarily", "necessary", "need", "needn", "needn't", "needs", "neither", "never", "nevertheless", "new", "next", "ng", "ni", "nine", "ninety", "nj", "nl", "nn", "no", "nobody", "non", "none", "nonetheless", "noone", "nor", "normally", "nos", "not", "noted", "nothing", "novel", "now", "nowhere", "nr", "ns", "nt", "ny", "o", "oa", "ob", "obtain", "obtained", "obviously", "oc", "od", "of", "off", "often", "og", "oh", "oi", "oj", "ok", "okay", "ol", "old", "om", "omitted", "on", "once", "one", "ones", "only", "onto", "oo", "op", "oq", "or", "ord", "os", "ot", "other", "others", "otherwise", "ou", "ought", "our", "ours", "ourselves", "out", "outside", "over", "overall", "ow", "owing", "own", "ox", "oz", "p", "p1", "p2", "p3", "page", "pagecount", "pages", "par", "part", "particular", "particularly", "pas", "past", "pc", "pd", "pe", "per", "perhaps", "pf", "ph", "pi", "pj", "pk", "pl", "placed", "please", "plus", "pm", "pn", "po", "poorly", "possible", "possibly", "potentially", "pp", "pq", "pr", "predominantly", "present", "presumably", "previously", "primarily", "probably", "promptly", "proud", "provides", "ps", "pt", "pu", "put", "py", "q", "qj", "qu", "que", "quickly", "quite", "qv", "r", "r2", "ra", "ran", "rather", "rc", "rd", "re", "readily", "really", "reasonably", "recent", "recently", "ref", "refs", "regarding", "regardless", "regards", "related", "relatively", "research", "research-articl", "respectively", "resulted", "resulting", "results", "rf", "rh", "ri", "right", "rj", "rl", "rm", "rn", "ro", "rq", "rr", "rs", "rt", "ru", "run", "rv", "ry", "s", "s2", "sa", "said", "same", "saw", "say", "saying", "says", "sc", "sd", "se", "sec", "second", "secondly", "section", "see", "seeing", "seem", "seemed", "seeming", "seems", "seen", "self", "selves", "sensible", "sent", "serious", "seriously", "seven", "several", "sf", "shall", "shan", "shan't", "she", "shed", "she'd", "she'll", "shes", "she's", "should", "shouldn", "shouldn't", "should've", "show", "showed", "shown", "showns", "shows", "si", "side", "significant", "significantly", "similar", "similarly", "since", "sincere", "six", "sixty", "sj", "sl", "slightly", "sm", "sn", "so", "some", "somebody", "somehow", "someone", "somethan", "something", "sometime", "sometimes", "somewhat", "somewhere", "soon", "sorry", "sp", "specifically", "specified", "specify", "specifying", "sq", "sr", "ss", "st", "still", "stop", "strongly", "sub", "substantially", "successfully", "such", "sufficiently", "suggest", "sup", "sure", "sy", "system", "sz", "t", "t1", "t2", "t3", "take", "taken", "taking", "tb", "tc", "td", "te", "tell", "ten", "tends", "tf", "th", "than", "thank", "thanks", "thanx", "that", "that'll", "thats", "that's", "that've", "the", "their", "theirs", "them", "themselves", "then", "thence", "there", "thereafter", "thereby", "thered", "therefore", "therein", "there'll", "thereof", "therere", "theres", "there's", "thereto", "thereupon", "there've", "these", "they", "theyd", "they'd", "they'll", "theyre", "they're", "they've", "thickv", "thin", "think", "third", "this", "thorough", "thoroughly", "those", "thou", "though", "thoughh", "thousand", "three", "throug", "through", "throughout", "thru", "thus", "ti", "til", "tip", "tj", "tl", "tm", "tn", "to", "together", "too", "took", "top", "toward", "towards", "tp", "tq", "tr", "tried", "tries", "truly", "try", "trying", "ts", "t's", "tt", "tv", "twelve", "twenty", "twice", "two", "tx", "u", "u201d", "ue", "ui", "uj", "uk", "um", "un", "under", "unfortunately", "unless", "unlike", "unlikely", "until", "unto", "uo", "up", "upon", "ups", "ur", "us", "use", "used", "useful", "usefully", "usefulness", "uses", "using", "usually", "ut", "v", "va", "value", "various", "vd", "ve", "ve", "very", "via", "viz", "vj", "vo", "vol", "vols", "volumtype", "vq", "vs", "vt", "vu", "w", "wa", "want", "wants", "was", "wasn", "wasnt", "wasn't", "way", "we", "wed", "we'd", "welcome", "well", "we'll", "well-b", "went", "were", "we're", "weren", "werent", "weren't", "we've", "what", "whatever", "what'll", "whats", "what's", "when", "whence", "whenever", "when's", "where", "whereafter", "whereas", "whereby", "wherein", "wheres", "where's", "whereupon", "wherever", "whether", "which", "while", "whim", "whither", "who", "whod", "whoever", "whole", "who'll", "whom", "whomever", "whos", "who's", "whose", "why", "why's", "wi", "widely", "will", "willing", "wish", "with", "within", "without", "wo", "won", "wonder", "wont", "won't", "words", "world", "would", "wouldn", "wouldnt", "wouldn't", "www", "x", "x1", "x2", "x3", "xf", "xi", "xj", "xk", "xl", "xn", "xo", "xs", "xt", "xv", "xx", "y", "y2", "yes", "yet", "yj", "yl", "you", "youd", "you'd", "you'll", "your", "youre", "you're", "yours", "yourself", "yourselves", "you've", "yr", "ys", "yt", "z", "zero", "zi", "zz"
-
-        });
-
-
-
-        // Lemmatizer - takes cleanTokens as input
-        LemmatizerModel lemmatizer = LemmatizerModel.pretrained();
-        lemmatizer.setInputCols(new String[]{"cleanTokens"});
-        lemmatizer.setOutputCol("lemma");
-
-        // Finisher - takes lemma as input
-        Finisher finisher = new Finisher()
-                .setInputCols(new String[]{"lemma"})
-                .setOutputCols(new String[]{"finished_lemma"})
-                .setOutputAsArray(true)
-                .setCleanAnnotations(false);
-
-        // HashingTF - takes finished_lemma as input
-        HashingTF tf = new HashingTF()
-                .setInputCol("finished_lemma")
-                .setOutputCol("rawFeatures")
-                .setNumFeatures(1000);
-
-
-
-        // Pipeline definition
-        Pipeline pipeline = new Pipeline().setStages(new PipelineStage[]{
-                documentAssembler,
-                tokenizer,
-                posTagger,
-                stopWordsCleaner,
-                lemmatizer,
-                wordEmbeddings,
-                nerModel,
-                nerConverter,
-                finisher,
-                tf
-        });
-
-        // Empty DataFrame with "text" column to fit the pipeline
-        StructType schema = new StructType().add("text", DataTypes.StringType);
-        Dataset<Row> emptyDF = spark.createDataFrame(Collections.emptyList(), schema);
-
-        // Fit pipeline once for streaming
-        PipelineModel nlpModel = pipeline.fit(emptyDF);
-
-        // Apply the NLP pipeline to streaming data
-        Dataset<Row> nlpTransformed = nlpModel.transform(cleanedData);
-        Dataset<Row> nerEntities = nlpTransformed
-                .selectExpr("explode(entities.result) as entity")
-                .filter(functions.length(functions.col("entity")).gt(2));
-
-
-        nerEntities.writeStream()
-                .outputMode("append")
-                .format("console")
-                .option("truncate", false)
-                .option("numRows", 20)
-                .start();
-
-        // Extract and explode keywords
-        Dataset<Row> keywords = nlpTransformed
-                .select(functions.explode(functions.col("finished_lemma")).as("word"))
-                .filter(functions.length(functions.col("word")).gt(2))
-                .filter(functions.col("word").notEqual(""));
-
-        // Group and count keywords
-        Dataset<Row> keywordCounts = keywords
-                .groupBy("word")
-                .count();
-
-        // Add inside your keywordCounts logic
-        keywordCounts
-                .withColumn("timestamp", functions.current_timestamp())
+        // Enhanced processing avec topic detection
+        Dataset<Row> articles = lines
+                .withColumn("title", col("value"))
+                .withColumn("received_date", current_timestamp())
+                .withColumn("word_count", size(split(col("value"), "\\s+")))
+                .withColumn("language", lit("fr"))
+                .withColumn("processing_status", lit("completed"))
+                // CORRECTION 1: URL unique avec timestamp
+                .withColumn("unique_url", concat(lit("socket://streaming/"),
+                        date_format(current_timestamp(), "yyyyMMddHHmmssSSS")))
+                // CORRECTION 2: Topic detection simple
+                .withColumn("detected_topic",
+                        when(lower(col("title")).contains("intelligence")
+                                .or(lower(col("title")).contains("ia"))
+                                .or(lower(col("title")).contains("artificielle")), "intelligence_artificielle")
+                                .when(lower(col("title")).contains("climat")
+                                        .or(lower(col("title")).contains("environnement"))
+                                        .or(lower(col("title")).contains("écologie")), "climat_environnement")
+                                .when(lower(col("title")).contains("économie")
+                                        .or(lower(col("title")).contains("finance"))
+                                        .or(lower(col("title")).contains("bourse")), "économie_finance")
+                                .when(lower(col("title")).contains("sport")
+                                        .or(lower(col("title")).contains("football"))
+                                        .or(lower(col("title")).contains("tennis")), "sport")
+                                .when(lower(col("title")).contains("santé")
+                                        .or(lower(col("title")).contains("médecine"))
+                                        .or(lower(col("title")).contains("covid")), "santé_médecine")
+                                .when(lower(col("title")).contains("technologie")
+                                        .or(lower(col("title")).contains("tech"))
+                                        .or(lower(col("title")).contains("innovation")), "technologie")
+                                .otherwise("général"));
+        // CORRECTION 3: Save articles to PostgreSQL avec gestion d'erreurs
+        StreamingQuery articlesQuery = articles
+                .select(
+                        col("title"),
+                        lit("Contenu généré automatiquement").as("content"),
+                        col("detected_topic").as("topic"),
+                        lit("CLI_Stream").as("source"),
+                        col("unique_url").as("url"), // URL unique maintenant
+                        col("received_date").as("published_date"),
+                        col("received_date"),
+                        current_timestamp().as("processed_date"),
+                        col("word_count"),
+                        col("language"),
+                        lit(null).cast("decimal(3,2)").as("sentiment_score"),
+                        col("processing_status")
+                )
                 .writeStream()
                 .foreachBatch((batchDF, batchId) -> {
-                    batchDF
-                            .write()
-                            .format("jdbc")
-                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
-                            .option("dbtable", "word_trends")
-                            .option("user", "postgres")
-                            .option("password", "fawzi1234")
-                            .option("driver", "org.postgresql.Driver")
-                            .mode("append")
-                            .save();
+                    long count = batchDF.count();
+                    System.out.println("\n=== 📝 BATCH " + batchId + " - PROCESSING " + count + " ARTICLES ===");
+                    if (count > 0) {
+                        try {
+                            System.out.println("📊 Articles to save:");
+                            batchDF.select("title", "topic", "source", "word_count").show(false);
+
+                            batchDF.write()
+                                    .format("jdbc")
+                                    .option("url", DB_URL)
+                                    .option("dbtable", "streaming_articles")
+                                    .option("user", DB_USER)
+                                    .option("password", DB_PASSWORD)
+                                    .option("driver", DB_DRIVER)
+                                    .mode("append")
+                                    .save();
+                            System.out.println("✅ " + count + " articles saved to streaming_articles!");
+                        } catch (Exception e) {
+                            System.err.println("❌ ERROR saving articles:");
+                            System.err.println("Details: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                    }
                 })
-                .outputMode("update")
+                .outputMode("append")
+                .trigger(Trigger.ProcessingTime("3 seconds"))
                 .start();
-        nerEntities
-                .withColumn("count", functions.lit(1))
-                .withColumn("timestamp", functions.current_timestamp())
+
+        // CORRECTION 4: Trending topics avec agrégation par fenêtre
+        Dataset<Row> trendingTopics = articles
+                .groupBy(
+                        col("detected_topic"),
+                        window(col("received_date"), "1 minutes") // Fenêtre d'1 minute
+                )
+                .agg(
+                        count("*").as("count"),
+                        max("received_date").as("last_seen")
+                )
+                .select(
+                        col("detected_topic").as("topic"),
+                        col("count"),
+                        col("count").cast("double").multiply(lit(2.0)).as("trend_score"), // Score basé sur count
+                        col("window.start").as("time_window"),
+                        lit("1 minutes").as("window_duration"),
+                        col("window.start").as("first_seen"),
+                        col("last_seen"),
+                        col("count").as("peak_count"),
+                        array(lit("CLI_Stream")).as("sources")
+                );
+
+        StreamingQuery topicsQuery = trendingTopics
                 .writeStream()
                 .foreachBatch((batchDF, batchId) -> {
-                    batchDF.write()
-                            .format("jdbc")
-                            .option("url", "jdbc:postgresql://localhost:5432/bigdata_trends")
-                            .option("dbtable", "ner_entities")
-                            .option("user", "postgres")
-                            .option("password", "fawzi1234")
-                            .option("driver", "org.postgresql.Driver")
-                            .mode("append")
-                            .save();
+                    long count = batchDF.count();
+                    if (count > 0) {
+                        System.out.println("\n=== 📈 SAVING " + count + " TRENDING TOPICS ===");
+                        batchDF.select("topic", "count", "trend_score").show(false);
+                        try {
+                            batchDF.write()
+                                    .format("jdbc")
+                                    .option("url", DB_URL)
+                                    .option("dbtable", "trending_topics")
+                                    .option("user", DB_USER)
+                                    .option("password", DB_PASSWORD)
+                                    .option("driver", DB_DRIVER)
+                                    .mode("append")
+                                    .save();
+                            System.out.println("✅ " + count + " trending topics saved!");
+                        } catch (Exception e) {
+                            System.err.println("❌ Error saving trending topics: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                    }
                 })
-                .outputMode("append")
+                .outputMode("complete")
+                .trigger(Trigger.ProcessingTime("10 seconds"))
                 .start();
 
+        // CORRECTION 5: Word cloud data
+        Dataset<Row> wordCloudData = articles
+                .withColumn("clean_title",
+                        regexp_replace(lower(col("title")), "[^a-zA-ZàáâäèéêëìíîïòóôöùúûüÿñçÀÁÂÄÈÉÊËÌÍÎÏÒÓÔÖÙÚÛÜŸÑÇ\\s]", ""))
+                .withColumn("words", split(col("clean_title"), "\\s+"))
+                .select(
+                        explode(col("words")).as("word"),
+                        col("detected_topic").as("topic"),
+                        current_timestamp().as("created_at")
+                )
+                .filter(length(col("word")).gt(3)) // Mots de plus de 3 caractères
+                .filter(not(col("word").rlike("^(le|la|les|un|une|des|de|du|et|est|sont|dans|pour|avec|sur|par|mais|ou|car|donc|puis|ainsi|mais|très|plus|bien|tout|tous|cette|cette|ces|ses|mes|nos|vos|leurs)$")))
+                .groupBy("word", "topic")
+                .agg(count("*").as("frequency"))
+                .filter(col("frequency").gt(0))
+                .withColumn("weight", col("frequency").cast("double"))
+                .withColumn("font_size",
+                        when(col("frequency").gt(10), 36)
+                                .when(col("frequency").gt(5), 28)
+                                .when(col("frequency").gt(2), 20)
+                                .otherwise(16))
+                .withColumn("color",
+                        when(col("frequency").gt(10), "#FF6B6B")
+                                .when(col("frequency").gt(5), "#4ECDC4")
+                                .when(col("frequency").gt(2), "#45B7D1")
+                                .otherwise("#95E1D3"))
+                .withColumn("category", lit("trending"))
+                .withColumn("expires_at",
+                        expr("current_timestamp() + interval '2 hours'"));
 
-        // Stream output to console
-        StreamingQuery query = keywordCounts
+        StreamingQuery wordCloudQuery = wordCloudData
                 .writeStream()
-                .outputMode("update")
-                .format("console")
-                .trigger(Trigger.ProcessingTime("1 second"))
-                .option("truncate", false)
-                .option("numRows", 10)
+                .foreachBatch((batchDF, batchId) -> {
+                    long count = batchDF.count();
+                    if (count > 0) {
+                        System.out.println("\n=== 🎨 SAVING " + count + " WORD CLOUD ENTRIES ===");
+                        batchDF.select("word", "frequency", "topic", "font_size").show(false);
+                        try {
+                            batchDF.write()
+                                    .format("jdbc")
+                                    .option("url", DB_URL)
+                                    .option("dbtable", "wordcloud_realtime")
+                                    .option("user", DB_USER)
+                                    .option("password", DB_PASSWORD)
+                                    .option("driver", DB_DRIVER)
+                                    .mode("append")
+                                    .save();
+                            System.out.println("✅ " + count + " word cloud entries saved!");
+                        } catch (Exception e) {
+                            System.err.println("❌ Error saving word cloud: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                    }
+                })
+                .outputMode("complete")
+                .trigger(Trigger.ProcessingTime("5 seconds"))
                 .start();
-        lines.writeStream()
-                .outputMode("append")
-                .format("console")
-                .start();
 
+        System.out.println("\n🎯 === STREAMING STARTED SUCCESSFULLY! ===");
+        System.out.println("📡 Send data via PowerShell:");
+        System.out.println("$client = New-Object System.Net.Sockets.TcpClient; $client.Connect('localhost', 9999); $stream = $client.GetStream(); $writer = New-Object System.IO.StreamWriter($stream); $writer.WriteLine('Intelligence artificielle révolutionne la médecine'); $writer.Flush(); $client.Close()");
+        System.out.println("🔍 Check Grafana dashboard for real-time updates!");
+        System.out.println("==========================================\n");
 
-
-        System.out.println("Streaming news analysis started. Waiting for data...");
-        query.awaitTermination();
+        // Attendre que toutes les requêtes se terminent
+        try {
+            articlesQuery.awaitTermination();
+        } finally {
+            spark.stop();
+        }
     }
 }
