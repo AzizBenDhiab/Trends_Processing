@@ -125,7 +125,7 @@ public class BatchNewsTrends {
 
         // Optimized keyword matching for trending news
         List<String> topKeywords = topWords.stream()
-                .limit(100)
+                .limit(10)
                 .map(row -> row.getString(0).toLowerCase())
                 .collect(Collectors.toList());
 

@@ -70,6 +70,8 @@ public class HDFSDataConnector {
                 case "dashboard_summary": response.add(getDashboardSummary()); break;
                 case "trend_comparison": response.add(getTrendComparison()); break;
                 case "trending_simple_news": response.add(gettrending_news()); break;
+                case "entites_count": response.add(getentity_count()); break;
+                case "country_counts": response.add(getCountryCounts()); break;
             }
         }
         return response;
@@ -85,7 +87,9 @@ public class HDFSDataConnector {
     }
 
     private Map<String, Object> getEntityTrends() {
-        return queryData("entity_trends", "count");
+        return queryTopEntityTrends(20);
+    }private Map<String, Object> getentity_count() {
+        return queryEntityCount(10);
     }
 
     private Map<String, Object> getTopKeywords() {
@@ -106,6 +110,42 @@ public class HDFSDataConnector {
     private Map<String, Object> gettrending_news() {
         return queryTrendingSimpleNews();
     }
+    private Map<String, Object> getCountryCounts() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("target", "country_counts");
+
+        try {
+            Dataset<Row> data = spark.read()
+                    .json("hdfs://localhost:9000/user/hadoop/grafana_data/country_trends")
+                    .limit(50);
+            data.show();
+            List<Map<String, Object>> datapoints = new ArrayList<>();
+            long baseTime = System.currentTimeMillis();
+            int interval = 1000;
+            int index = 0;
+
+            for (Row row : data.collectAsList()) {
+                String country = row.getAs("country");
+                Long count = row.getAs("count");
+
+                if (country != null && count != null) {
+                    Map<String, Object> point = new HashMap<>();
+                    point.put("label", country);
+                    point.put("value", count);
+                    point.put("timestamp", baseTime + (index++ * interval));
+                    datapoints.add(point);
+                }
+            }
+
+            result.put("datapoints", datapoints);
+        } catch (Exception e) {
+            e.printStackTrace();
+            result.put("datapoints", new ArrayList<>());
+        }
+
+        return result;
+    }
+
 
     private Map<String, Object> getEntityTypeDistribution() {
         Map<String, Object> result = new HashMap<>();
@@ -142,7 +182,51 @@ public class HDFSDataConnector {
         try {
             Dataset<Row> data = spark.read()
                     .json("hdfs://localhost:9000/user/hadoop/grafana_data/trending_simple_news")
-                    .limit(50);
+                    .limit(10);
+
+            List<Row> rows = data.collectAsList();
+            long totalHits = rows.stream()
+                    .mapToLong(row -> {
+                        Long hits = row.getAs("keyword_hits");
+                        return hits != null ? hits : 0;
+                    })
+                    .sum();
+
+            List<Map<String, Object>> datapoints = new ArrayList<>();
+
+            for (Row row : rows) {
+                String title = row.getAs("news_title");
+                Long hits = row.getAs("keyword_hits");
+
+                if (title != null && hits != null && hits > 0 && totalHits > 0) {
+                    double percentage = (double) hits / totalHits * 100;
+
+                    Map<String, Object> point = new HashMap<>();
+                    point.put("text", title);
+                    point.put("value", Math.round(percentage * 100.0) / 100.0); // Round to 2 decimals
+
+                    datapoints.add(point);
+                }
+            }
+
+            result.put("datapoints", datapoints);
+        } catch (Exception e) {
+            e.printStackTrace();
+            result.put("datapoints", new ArrayList<Object>());
+        }
+
+        return result;
+    }
+
+    private Map<String, Object> queryTopEntityTrends(int limit) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("target", "entity_trends");
+
+        try {
+            Dataset<Row> data = spark.read()
+                    .json("hdfs://localhost:9000/user/hadoop/grafana_data/entity_trends")
+                    .limit(limit);
+            data.show();
 
             List<Map<String, Object>> datapoints = new ArrayList<>();
             long baseTime = System.currentTimeMillis();
@@ -150,14 +234,52 @@ public class HDFSDataConnector {
             int index = 0;
 
             for (Row row : data.collectAsList()) {
-                String title = row.getAs("news_title");
-                Long  hits = row.getAs("keyword_hits");
+                long value = row.getAs("count");
+                String  label = row.getAs("entity");
 
 
-                if (title != null && hits != null && hits > 0) {
+                if ( label != null) {
                     Map<String, Object> point = new HashMap<>();
-                    point.put("text", title);
-                    point.put("value", hits);
+                    point.put("value", value);
+                    point.put("label", label);
+
+                    datapoints.add(point);
+
+                }
+            }
+
+            result.put("datapoints", datapoints);
+        } catch (Exception e) {
+            e.printStackTrace();
+            result.put("datapoints", new ArrayList<Object>());
+        }
+
+        return result;
+    }
+    private Map<String, Object> queryEntityCount(int limit) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("target", "entity_trends");
+
+        try {
+            Dataset<Row> data = spark.read()
+                    .json("hdfs://localhost:9000/user/hadoop/grafana_data/entity_trends")
+                    .limit(limit);
+            data.show();
+
+            List<Map<String, Object>> datapoints = new ArrayList<>();
+            long baseTime = System.currentTimeMillis();
+            int interval = 1000;
+            int index = 0;
+
+            for (Row row : data.collectAsList()) {
+                long value = row.getAs("count");
+                String  label = row.getAs("entity");
+
+
+                if ( label != null) {
+                    Map<String, Object> point = new HashMap<>();
+                    point.put("value", value);
+                    point.put("label", label);
 
                     datapoints.add(point);
 
@@ -216,6 +338,7 @@ public class HDFSDataConnector {
     private Map<String, Object> queryData(String pathKey, String valueField) {
         Map<String, Object> result = new HashMap<>();
         result.put("target", pathKey);
+
 
         try {
             Dataset<Row> data = spark.read()

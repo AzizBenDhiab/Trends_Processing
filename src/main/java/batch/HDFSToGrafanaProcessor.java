@@ -27,6 +27,7 @@ public class HDFSToGrafanaProcessor {
                 .getOrCreate();
 
         try {
+            processCountryData(spark);
             processNewsSimpleData(spark);
             processKeywordData(spark);
             processEntityData(spark);
@@ -37,7 +38,104 @@ public class HDFSToGrafanaProcessor {
             spark.close();
         }
     }
+    private static void processCountryData(SparkSession spark) {
+        System.out.println("Processing country data from HDFS...");
 
+        // Read country data from HDFS
+        Dataset<Row> countryRawData = spark.read()
+                .text("hdfs://localhost:9000/user/hadoop/country");
+
+        // Parse the country data (format: "country : count")
+        Dataset<Row> countryData = countryRawData
+                .withColumn("country_info", functions.split(functions.col("value"), " : "))
+                .withColumn("country", functions.element_at(functions.col("country_info"), 1))
+                .withColumn("count", functions.element_at(functions.col("country_info"), 2).cast(DataTypes.LongType))
+                .select("country", "count")
+                .filter(functions.col("count").isNotNull());
+
+        // Add temporal information like other data types
+        Dataset<Row> countryTrends = countryData
+                .withColumn("timestamp", functions.unix_timestamp().cast(DataTypes.LongType).multiply(1000))
+                .withColumn("date", functions.current_date())
+                .withColumn("hour", functions.hour(functions.current_timestamp()))
+                .orderBy(functions.desc("count"));
+
+        // Save processed country trends
+        countryTrends.coalesce(1)
+                .write()
+                .mode(SaveMode.Overwrite)
+                .json("hdfs://localhost:9000/user/hadoop/grafana_data/country_trends");
+
+        // Create hourly country data (similar to keywords)
+        Dataset<Row> hourlyCountries = countryTrends
+                .groupBy("country", "date", "hour")
+                .agg(functions.sum("count").alias("hourly_count"))
+                .withColumn("datetime", functions.concat(
+                        functions.col("date"),
+                        functions.lit(" "),
+                        functions.col("hour"),
+                        functions.lit(":00:00")
+                ))
+                .select("country", "hourly_count", "datetime");
+
+        hourlyCountries.coalesce(1)
+                .write()
+                .mode(SaveMode.Overwrite)
+                .json("hdfs://localhost:9000/user/hadoop/grafana_data/hourly_country_trends");
+
+        // Create top countries view
+        Dataset<Row> topCountries = countryTrends
+                .select("country", "count", "timestamp")
+                .orderBy(functions.desc("count"))
+                .limit(20);
+
+        topCountries.coalesce(1)
+                .write()
+                .mode(SaveMode.Overwrite)
+                .json("hdfs://localhost:9000/user/hadoop/grafana_data/top_countries");
+
+        // Create country statistics
+        Dataset<Row> countryStats = countryTrends
+                .agg(
+                        functions.count("country").alias("total_countries"),
+                        functions.sum("count").alias("total_mentions"),
+                        functions.avg("count").alias("avg_mentions_per_country"),
+                        functions.max("count").alias("max_country_mentions"),
+                        functions.min("count").alias("min_country_mentions")
+                )
+                .withColumn("timestamp", functions.current_timestamp())
+                .withColumn("date", functions.current_date());
+
+        countryStats.coalesce(1)
+                .write()
+                .mode(SaveMode.Overwrite)
+                .json("hdfs://localhost:9000/user/hadoop/grafana_data/country_stats");
+
+        // Create country distribution by regions (example categorization)
+        Dataset<Row> countryByRegion = countryTrends
+                .withColumn("region",
+                        functions.when(functions.col("country").isin("usa", "Canada", "Brazil"), "Americas")
+                                .when(functions.col("country").isin("France", "Germany", "Russia"), "Europe")
+                                .when(functions.col("country").isin("China", "India", "Japan"), "Asia")
+                                .when(functions.col("country").isin("Egypt"), "Africa")
+                                .otherwise("Other")
+                )
+                .groupBy("region", "date")
+                .agg(
+                        functions.count("country").alias("countries_count"),
+                        functions.sum("count").alias("total_regional_mentions"),
+                        functions.avg("count").alias("avg_regional_mentions")
+                )
+                .withColumn("timestamp", functions.current_timestamp());
+
+        countryByRegion.coalesce(1)
+                .write()
+                .mode(SaveMode.Overwrite)
+                .json("hdfs://localhost:9000/user/hadoop/grafana_data/country_by_region");
+
+        System.out.println("Country data processing completed!");
+        countryTrends.show(10, false);
+    }
     private static void processNewsSimpleData(SparkSession spark) {
         Dataset<Row> topSimpleNews = spark.read()
                 .parquet("hdfs://localhost:9000/user/hadoop/trending_simple_news")
@@ -112,9 +210,10 @@ public class HDFSToGrafanaProcessor {
 
         Dataset<Row> entityData = spark.read()
                 .parquet("hdfs://localhost:9000/user/hadoop/entity_counts");
+        entityData.show();
 
         Dataset<Row> entityTrends = entityData
-                .groupBy("entity", "entity_type") // Group to remove duplicates
+                .groupBy("entity") // Group to remove duplicates
                 .agg(functions.sum("count").alias("count")) // Sum count across days
                 .withColumn("timestamp", functions.unix_timestamp().cast(DataTypes.LongType).multiply(1000))
                 .withColumn("date", functions.current_date())
