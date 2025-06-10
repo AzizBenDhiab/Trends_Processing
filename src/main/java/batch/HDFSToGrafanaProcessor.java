@@ -5,6 +5,9 @@ import org.apache.spark.sql.*;
 import org.apache.spark.sql.expressions.Window;
 import org.apache.spark.sql.expressions.WindowSpec;
 import org.apache.spark.sql.types.DataTypes;
+
+import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 
 public class HDFSToGrafanaProcessor {
@@ -27,7 +30,7 @@ public class HDFSToGrafanaProcessor {
                 .getOrCreate();
 
         try {
-            processCountryData(spark);
+
             processNewsSimpleData(spark);
             processKeywordData(spark);
             processEntityData(spark);

@@ -44,16 +44,15 @@ public class BatchNewsTrends {
                 .config(conf)
                 .getOrCreate();
 
-        String inputPath = "src/main/resources/last-week-news.txt";
-
-        // Read and preprocess data - cache early for reuse
-        Dataset<Row> data = spark.read().text(inputPath)
+        Dataset<Row> data = spark.read()
+                .text("hdfs://localhost:9000/user/hadoop/news_output")
                 .withColumnRenamed("value", "text")
-                .filter(functions.length(functions.col("text")).gt(10)) // Filter very short texts
+                .filter(functions.length(functions.col("text")).gt(10))
                 .withColumn("text", functions.regexp_replace(functions.col("text"), "[,\\.!?]", ""))
-                .cache(); // Cache for reuse
+                .cache();
 
-        System.out.println("Total records: " + data.count());
+
+
 
         // Create optimized NLP pipeline - only essential components
         DocumentAssembler documentAssembler = new DocumentAssembler();
