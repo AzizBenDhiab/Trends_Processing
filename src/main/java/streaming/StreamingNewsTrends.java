@@ -12,7 +12,7 @@ public class StreamingNewsTrends {
 
     private static final String DB_URL = "jdbc:postgresql://localhost:5432/rss_analytics";
     private static final String DB_USER = "postgres"; // Changé pour simplifier
-    private static final String DB_PASSWORD = "rabeb2002"; // CHANGEZ ICI votre mot de passe
+    private static final String DB_PASSWORD = "fawzi1234"; // CHANGEZ ICI votre mot de passe
     private static final String DB_DRIVER = "org.postgresql.Driver";
 
     public static void main(String[] args) throws StreamingQueryException, TimeoutException {
